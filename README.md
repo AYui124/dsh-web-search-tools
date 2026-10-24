@@ -15,6 +15,7 @@
 
 安装后，在主界面的“插件 → 已安装”中打开本插件，再点击 `dsh-web-search-tools` 行的“配置”：
 
+- `disableBuiltInSearch`：默认开启，阻止 Agent 看到或调用 DeepSeek Harness 内置的 `web_search`；不影响 `web_fetch`。
 - `tavilyApiKey`：Tavily API Key（Secret 字段；优先使用）。
 - `braveApiKey`：Brave Search API subscription token（Secret 字段；Tavily 未配置时使用）。
 - `tavilyBaseURL`：默认 `https://api.tavily.com`。
@@ -25,6 +26,16 @@
 - `maxSnippetChars`：每条摘要保留字符上限，默认 2000。
 
 Secret 配置为 volatile，修改后后续请求会重新选择提供商，无需为密钥切换重启插件。
+
+### DeepSeek 内置搜索限制
+
+开启 `disableBuiltInSearch` 后，插件通过 Agent 范围的 Tool 限制隐藏并拒绝调用内置 `web_search`，避免在未配置 DeepSeek 搜索凭据时被模型选中并报错。该开关不会禁用 `web_fetch`，也不会卸载共享 Web 服务。
+
+关联的 DeepSeek 内置插件包为：
+
+- `@deepseek-ai/dsh-tool-web`：注册模型侧 `web_search` 和 `web_fetch` 工具；本插件只限制其中的 `web_search`。
+- `@deepseek-ai/dsh-web-search-deepseek`：DeepSeek 搜索提供商。
+- `@deepseek-ai/dsh-web-deepseek-api`：DeepSeek 搜索 API 适配器。
 
 ## `search_web` 参数
 

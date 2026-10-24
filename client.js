@@ -4,9 +4,10 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const NS = 'web-search-tools'
-    const FIELDS = ['tavilyBaseURL', 'braveBaseURL', 'timeoutMs', 'maxResults', 'maxResponseBytes', 'maxSnippetChars']
+    const FIELDS = ['disableBuiltInSearch', 'tavilyBaseURL', 'braveBaseURL', 'timeoutMs', 'maxResults', 'maxResponseBytes', 'maxSnippetChars']
     const SECRET_FIELDS = ['tavilyApiKey', 'braveApiKey']
     const defaults = {
+      disableBuiltInSearch: true,
       tavilyBaseURL: 'https://api.tavily.com',
       braveBaseURL: 'https://api.search.brave.com/res/v1',
       timeoutMs: 30000,
@@ -14,10 +15,16 @@ window.__ModuleLoader__.load({
       maxResponseBytes: 2097152,
       maxSnippetChars: 2000,
     }
+    const BUILT_IN_SEARCH_PACKAGES = [
+      '@deepseek-ai/dsh-tool-web',
+      '@deepseek-ai/dsh-web-search-deepseek',
+      '@deepseek-ai/dsh-web-deepseek-api',
+    ]
     const dictionaries = {
       en: {
         summary: 'Configure one auto-routed search tool. Tavily is preferred when both provider keys are saved.',
         loading: 'Loading web search settings…', unavailable: 'This configuration is unavailable.', readOnly: 'This configuration is read-only.',
+        builtInSearch: 'Built-in DeepSeek search', disableBuiltInSearch: 'Prevent agents from calling the built-in web_search tool', disableBuiltInSearchHint: 'Recommended when no DeepSeek search credential is configured. The built-in web_fetch tool remains available.', affectedPlugins: 'Associated built-in packages:',
         credentials: 'Search providers', limits: 'Request and output limits', tavilyBaseURL: 'Tavily base URL', braveBaseURL: 'Brave base URL',
         tavilyApiKey: 'Tavily API key', braveApiKey: 'Brave subscription token', secretHint: 'Leave blank to keep the saved secret unchanged.',
         clearTavilyApiKey: 'Clear saved Tavily API key', clearBraveApiKey: 'Clear saved Brave subscription token',
@@ -28,6 +35,7 @@ window.__ModuleLoader__.load({
       zh: {
         summary: '配置一个自动路由的搜索工具；两个密钥都保存时优先使用 Tavily。',
         loading: '正在加载网络搜索设置…', unavailable: '此配置当前不可用。', readOnly: '此配置为只读。',
+        builtInSearch: 'DeepSeek 内置搜索', disableBuiltInSearch: '阻止 Agent 调用内置 web_search 工具', disableBuiltInSearchHint: '未配置 DeepSeek 搜索凭据时建议开启；内置 web_fetch 工具仍然可用。', affectedPlugins: '关联的内置插件：',
         credentials: '搜索提供商', limits: '请求与输出限制', tavilyBaseURL: 'Tavily 基础 URL', braveBaseURL: 'Brave 基础 URL',
         tavilyApiKey: 'Tavily API Key', braveApiKey: 'Brave Subscription Token', secretHint: '留空将保持已保存的密钥不变。',
         clearTavilyApiKey: '清除已保存的 Tavily API Key', clearBraveApiKey: '清除已保存的 Brave Subscription Token',
@@ -121,10 +129,19 @@ window.__ModuleLoader__.load({
           .wst-group h4{grid-column:1/-1;margin:0;font-size:14px;font-weight:600}.wst-wide{grid-column:1/-1}
           .wst-field{display:flex;min-width:0;flex-direction:column;gap:6px}.wst-label{font-size:13px;font-weight:500}.wst-hint{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
           .wst-input{box-sizing:border-box;width:100%;height:36px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:0 10px;font:inherit}.wst-input:focus{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
-          .wst-check{display:flex;align-items:flex-start;gap:8px;font-size:13px}.wst-actions{display:flex;align-items:center;gap:10px}.wst-button{height:36px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:0 16px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}.wst-button-primary{border-color:var(--dsw-alias-brand-primary)}.wst-button:disabled{cursor:not-allowed;opacity:.55}.wst-status{margin:0;font-size:13px}.wst-error{color:var(--dsw-alias-state-error-primary)}.wst-success{color:var(--dsw-alias-state-success-primary)}
+          .wst-check{display:flex;align-items:flex-start;gap:8px;font-size:13px}.wst-check-copy{display:flex;flex-direction:column;gap:4px}.wst-packages{grid-column:1/-1;margin:0;padding-left:20px;color:var(--dsw-alias-label-secondary);font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace}.wst-actions{display:flex;align-items:center;gap:10px}.wst-button{height:36px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:0 16px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}.wst-button-primary{border-color:var(--dsw-alias-brand-primary)}.wst-button:disabled{cursor:not-allowed;opacity:.55}.wst-status{margin:0;font-size:13px}.wst-error{color:var(--dsw-alias-state-error-primary)}.wst-success{color:var(--dsw-alias-state-success-primary)}
           @media(max-width:720px){.wst-group{grid-template-columns:1fr}}
         `),
         h('form', { className: 'wst-form', onSubmit: save },
+          h('section', { className: 'wst-group' },
+            h('h4', null, t('builtInSearch')),
+            h('label', { className: 'wst-check wst-wide' },
+              h('input', { type: 'checkbox', checked: draft.disableBuiltInSearch, onChange: event => set('disableBuiltInSearch', event.target.checked) }),
+              h('span', { className: 'wst-check-copy' }, h('span', null, t('disableBuiltInSearch')), h('span', { className: 'wst-hint' }, t('disableBuiltInSearchHint'))),
+            ),
+            h('div', { className: 'wst-wide wst-hint' }, t('affectedPlugins')),
+            h('ul', { className: 'wst-packages' }, ...BUILT_IN_SEARCH_PACKAGES.map(packageName => h('li', { key: packageName }, packageName))),
+          ),
           h('section', { className: 'wst-group' },
             h('h4', null, t('credentials')),
             h('div', { className: 'wst-wide' }, h(TextField, { label: t('tavilyBaseURL'), name: 'tavilyBaseURL', value: draft.tavilyBaseURL, onChange: value => set('tavilyBaseURL', value) })),

@@ -4,6 +4,7 @@ import { apply } from '../index.js'
 
 function config(overrides = {}) {
   return {
+    disableBuiltInSearch: true,
     tavilyApiKey: 'tvly-secret',
     braveApiKey: 'brave-secret',
     tavilyBaseURL: 'https://tavily.example/v1',
@@ -18,14 +19,39 @@ function config(overrides = {}) {
 
 function harness() {
   const definitions = new Map()
+  const restrictions = []
+  const listeners = new Map()
+  const createAgent = () => ({
+    ctx: {
+      tools: {
+        restrict(filter) {
+          restrictions.push(filter)
+          return () => {
+            const index = restrictions.indexOf(filter)
+            if (index >= 0) restrictions.splice(index, 1)
+          }
+        },
+      },
+    },
+  })
+  const agent = createAgent()
   return {
     definitions,
+    restrictions,
+    listeners,
+    createAgent,
     ctx: {
       tools: {
         register(definition) {
           definitions.set(definition.name, definition)
           return () => definitions.delete(definition.name)
         },
+      },
+      agents: { list: () => [agent] },
+      effect(callback) { return callback() },
+      on(name, listener) {
+        listeners.set(name, listener)
+        return () => listeners.delete(name)
       },
     },
   }
@@ -37,6 +63,20 @@ test('registers one unified search tool', () => {
   const { ctx, definitions } = harness()
   apply(ctx, config())
   assert.deepEqual([...definitions.keys()], ['search_web'])
+})
+
+test('hides the built-in web_search tool for existing and future agents', () => {
+  const { ctx, restrictions, listeners, createAgent } = harness()
+  apply(ctx, config())
+  assert.deepEqual(restrictions, [{ deny: ['web_search'] }])
+  listeners.get('agent/created')({ agent: createAgent() })
+  assert.deepEqual(restrictions, [{ deny: ['web_search'] }, { deny: ['web_search'] }])
+})
+
+test('keeps the built-in web_search tool available when suppression is disabled', () => {
+  const { ctx, restrictions } = harness()
+  apply(ctx, config({ disableBuiltInSearch: false }))
+  assert.deepEqual(restrictions, [])
 })
 
 test('prefers Tavily when both keys are configured', { concurrency: false }, async () => {

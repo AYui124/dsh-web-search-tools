@@ -2,11 +2,12 @@ import z from '@deepseek-ai/schemastery'
 import { endpointURL, normalizeBrave, normalizeTavily, responseJSON } from './api.js'
 
 export const name = 'web-search-tools'
-export const inject = ['tools']
+export const inject = ['tools', 'agents']
 
 const MAX_TIMER_MS = 2_147_483_647
 
 export const Config = z.object({
+  disableBuiltInSearch: z.boolean().default(true).description('Hide and deny the built-in web_search tool for all agents. This does not disable web_fetch.'),
   tavilyApiKey: z.string().role('secret').default('').volatile().description('Tavily API key. When both provider keys are configured, Tavily is preferred.'),
   braveApiKey: z.string().role('secret').default('').volatile().description('Brave Search API subscription token. Used only when no Tavily API key is configured.'),
   tavilyBaseURL: z.string().default('https://api.tavily.com').volatile().description('Tavily API root URL.'),
@@ -74,6 +75,7 @@ function resolveConfig(config) {
   const tavilyApiKey = readValue(config.tavilyApiKey)
   const braveApiKey = readValue(config.braveApiKey)
   return {
+    disableBuiltInSearch: readValue(config.disableBuiltInSearch) !== false,
     tavilyApiKey: typeof tavilyApiKey === 'string' ? tavilyApiKey.trim() : '',
     braveApiKey: typeof braveApiKey === 'string' ? braveApiKey.trim() : '',
     tavilyBaseURL: text(readValue(config.tavilyBaseURL), 'https://api.tavily.com'),
@@ -188,11 +190,30 @@ function registerSearchTool(ctx, current) {
   })
 }
 
+function restrictBuiltInSearch(ctx, current) {
+  if (!current.disableBuiltInSearch) return
+  ctx.effect(() => {
+    const disposers = new Set()
+    const restrict = agent => {
+      const dispose = agent.ctx.tools.restrict({ deny: ['web_search'] })
+      disposers.add(dispose)
+    }
+    for (const agent of ctx.agents.list()) restrict(agent)
+    const stop = ctx.on('agent/created', ({ agent }) => restrict(agent))
+    return () => {
+      stop()
+      for (const dispose of disposers) dispose()
+      disposers.clear()
+    }
+  })
+}
+
 export function apply(ctx, config) {
   const current = new Proxy({}, {
     get(_target, property) {
       return resolveConfig(config)[property]
     },
   })
+  restrictBuiltInSearch(ctx, current)
   registerSearchTool(ctx, current)
 }
