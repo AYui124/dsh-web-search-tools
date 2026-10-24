@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Tavily 与 Brave 网络搜索工具",
+    "description": "提供一个自动选择 Tavily 或 Brave、同时限制输出大小的 Agent 网络搜索工具。"
+  }
+}
