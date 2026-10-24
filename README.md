@@ -13,7 +13,7 @@
 
 ## 配置
 
-安装后，在主界面的“插件 → 已安装”中打开本插件，再点击 `web-search-tools` 行的“配置”：
+安装后，在主界面的“插件 → 已安装”中打开本插件，再点击 `dsh-web-search-tools` 行的“配置”：
 
 - `tavilyApiKey`：Tavily API Key（Secret 字段；优先使用）。
 - `braveApiKey`：Brave Search API subscription token（Secret 字段；Tavily 未配置时使用）。

@@ -1,4 +1,4 @@
 - insert:
-    - id: web-search-tools
+    - id: dsh-web-search-tools
       name: '@ayui124/dsh-web-search-tools'
       config: {}

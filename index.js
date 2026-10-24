@@ -105,7 +105,7 @@ function resultLimit(args, config) {
 function selectedProvider(config) {
   if (config.tavilyApiKey) return 'tavily'
   if (config.braveApiKey) return 'brave'
-  throw new Error('No search provider API key is configured. Configure a Tavily or Brave key in the web-search-tools plugin settings.')
+  throw new Error('No search provider API key is configured. Configure a Tavily or Brave key in the dsh-web-search-tools plugin settings.')
 }
 
 const BRAVE_FRESHNESS = { day: 'pd', week: 'pw', month: 'pm', year: 'py' }

@@ -162,7 +162,7 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.locale.register(NS, dictionaries))
         ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
           name: 'plugins.row.config',
-          key: '@ayui124/dsh-web-search-tools#web-search-tools',
+          key: '@ayui124/dsh-web-search-tools#dsh-web-search-tools',
           locale: NS,
         }, SearchToolsConfig))
       },
