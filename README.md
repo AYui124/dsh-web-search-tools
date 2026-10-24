@@ -4,10 +4,11 @@
 
 插件根据密钥配置自动选择提供商：
 
-1. 配置了 `tavilyApiKey` 时使用 Tavily。
+1. 配置了 `tavilyApiKey` 且不在冷却期时使用 Tavily。
 2. 没有 Tavily Key、但配置了 `braveApiKey` 时使用 Brave Search。
 3. 两个 Key 都配置时优先 Tavily。
-4. 两个 Key 都未配置时，工具返回明确的配置错误。
+4. Tavily 返回 HTTP 432 或 433 时，立即用 Brave 重试，并在冷却期内跳过 Tavily。
+5. 两个 Key 都未配置时，工具返回明确的配置错误。
 
 工具返回统一、受限的结构：`provider`、`query`、可选 `answer`、`results[]` 和 `truncated`。每条结果最多包含标题、URL、摘要、发布时间和相关度分数；`provider` 会说明本次实际使用了 Tavily 还是 Brave。
 
@@ -21,11 +22,18 @@
 - `tavilyBaseURL`：默认 `https://api.tavily.com`。
 - `braveBaseURL`：默认 `https://api.search.brave.com/res/v1`。
 - `timeoutMs`：单次请求超时，默认 30 秒。
+- `tavilyQuotaCooldownMs`：Tavily 返回 HTTP 432/433 后的冷却时长，默认 600000 毫秒（10 分钟）。
 - `maxResults`：每次最多返回 1–20 条结果，默认 10。
 - `maxResponseBytes`：提供商 JSON 响应大小上限，默认 2 MiB。
 - `maxSnippetChars`：每条摘要保留字符上限，默认 2000。
 
 Secret 配置为 volatile，修改后后续请求会重新选择提供商，无需为密钥切换重启插件。
+
+### Tavily 配额回退
+
+Tavily 返回 HTTP 432 或 433 时会被视为使用次数或配额不足。若配置了 Brave Key，当前请求立即改用 Brave；后续请求在 `tavilyQuotaCooldownMs` 内直接使用 Brave，冷却结束后再尝试 Tavily。冷却状态仅保存在当前 Host 进程内，重载插件或重启 Host 后会清除。
+
+如果没有配置 Brave Key，首次 432/433 会返回 Tavily 错误和明确的回退配置提示；冷却期内不会继续请求 Tavily。
 
 ### DeepSeek 内置搜索限制
 

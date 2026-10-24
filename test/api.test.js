@@ -46,6 +46,18 @@ test('surfaces bounded provider errors without credentials', async () => {
   await assert.rejects(() => responseJSON('Brave', response, 1024), /HTTP 401: invalid subscription token; request-id=req_test/u)
 })
 
+test('attaches the provider HTTP status to bounded errors', async () => {
+  const response = new Response(JSON.stringify({ error: 'usage limit reached' }), { status: 433 })
+  let captured
+  try {
+    await responseJSON('Tavily', response, 1024)
+  } catch (error) {
+    captured = error
+  }
+  assert.equal(captured?.statusCode, 433)
+  assert.match(captured?.message, /HTTP 433/u)
+})
+
 test('rejects oversized responses before parsing', async () => {
   const response = new Response(JSON.stringify({ results: [] }), {
     status: 200,

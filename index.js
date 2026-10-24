@@ -5,6 +5,8 @@ export const name = 'web-search-tools'
 export const inject = ['tools', 'agents']
 
 const MAX_TIMER_MS = 2_147_483_647
+const DEFAULT_TAVILY_QUOTA_COOLDOWN_MS = 10 * 60 * 1_000
+const TAVILY_QUOTA_STATUSES = new Set([432, 433])
 
 export const Config = z.object({
   disableBuiltInSearch: z.boolean().default(true).description('Hide and deny the built-in web_search tool for all agents. This does not disable web_fetch.'),
@@ -13,6 +15,7 @@ export const Config = z.object({
   tavilyBaseURL: z.string().default('https://api.tavily.com').volatile().description('Tavily API root URL.'),
   braveBaseURL: z.string().default('https://api.search.brave.com/res/v1').volatile().description('Brave Search API root URL.'),
   timeoutMs: z.natural().min(1).max(MAX_TIMER_MS).default(30_000).volatile().description('Search API request timeout in milliseconds.'),
+  tavilyQuotaCooldownMs: z.natural().min(1).max(MAX_TIMER_MS).default(DEFAULT_TAVILY_QUOTA_COOLDOWN_MS).volatile().description('How long Tavily stays disabled after HTTP 432 or 433 before it is tried again.'),
   maxResults: z.natural().min(1).max(20).default(10).volatile().description('Maximum search results returned per call, from 1 to 20.'),
   maxResponseBytes: z.natural().min(1).default(2 * 1024 * 1024).volatile().description('Maximum JSON response bytes accepted from a search provider.'),
   maxSnippetChars: z.natural().min(100).max(10_000).default(2_000).volatile().description('Maximum characters retained in each normalized result snippet.'),
@@ -81,6 +84,7 @@ function resolveConfig(config) {
     tavilyBaseURL: text(readValue(config.tavilyBaseURL), 'https://api.tavily.com'),
     braveBaseURL: text(readValue(config.braveBaseURL), 'https://api.search.brave.com/res/v1'),
     timeoutMs: integer(readValue(config.timeoutMs), 30_000, 1, MAX_TIMER_MS),
+    tavilyQuotaCooldownMs: integer(readValue(config.tavilyQuotaCooldownMs), DEFAULT_TAVILY_QUOTA_COOLDOWN_MS, 1, MAX_TIMER_MS),
     maxResults: integer(readValue(config.maxResults), 10, 1, 20),
     maxResponseBytes: integer(readValue(config.maxResponseBytes), 2 * 1024 * 1024, 1, Number.MAX_SAFE_INTEGER),
     maxSnippetChars: integer(readValue(config.maxSnippetChars), 2_000, 100, 10_000),
@@ -104,10 +108,12 @@ function resultLimit(args, config) {
   return args.max_results
 }
 
-function selectedProvider(config) {
-  if (config.tavilyApiKey) return 'tavily'
-  if (config.braveApiKey) return 'brave'
-  throw new Error('No search provider API key is configured. Configure a Tavily or Brave key in the dsh-web-search-tools plugin settings.')
+function noProviderError() {
+  return new Error('No search provider API key is configured. Configure a Tavily or Brave key in the dsh-web-search-tools plugin settings.')
+}
+
+function isTavilyQuotaError(error) {
+  return error instanceof Error && TAVILY_QUOTA_STATUSES.has(error.statusCode)
 }
 
 const BRAVE_FRESHNESS = { day: 'pd', week: 'pw', month: 'pm', year: 'py' }
@@ -159,10 +165,35 @@ async function searchBrave(query, maxResults, freshness, config, signal) {
   return normalizeBrave(payload, query, maxResults, config.maxSnippetChars)
 }
 
+function createSearchRouter(config) {
+  let tavilyDisabledUntil = 0
+  return async (query, maxResults, freshness, signal) => {
+    const tavilyConfigured = config.tavilyApiKey.length > 0
+    const braveConfigured = config.braveApiKey.length > 0
+    if (tavilyConfigured && Date.now() >= tavilyDisabledUntil) {
+      try {
+        return await searchTavily(query, maxResults, freshness, config, signal)
+      } catch (error) {
+        if (!isTavilyQuotaError(error)) throw error
+        tavilyDisabledUntil = Date.now() + config.tavilyQuotaCooldownMs
+        if (braveConfigured) return searchBrave(query, maxResults, freshness, config, signal)
+        throw new Error(`${error.message} Tavily is temporarily disabled and no Brave key is configured.`, { cause: error })
+      }
+    }
+    if (braveConfigured) return searchBrave(query, maxResults, freshness, config, signal)
+    if (tavilyConfigured) {
+      const remainingSeconds = Math.max(1, Math.ceil((tavilyDisabledUntil - Date.now()) / 1_000))
+      throw new Error(`Tavily is temporarily disabled for approximately ${remainingSeconds} more seconds after HTTP 432/433, and no Brave key is configured.`)
+    }
+    throw noProviderError()
+  }
+}
+
 function registerSearchTool(ctx, current) {
+  const search = createSearchRouter(current)
   ctx.tools.register({
     name: 'search_web',
-    description: 'Search the current web through the configured provider. Tavily is used when its key is configured; otherwise Brave is used. If both keys are configured, Tavily takes priority.',
+    description: 'Search the current web through the configured provider. Tavily is preferred; HTTP 432 or 433 temporarily routes searches to Brave when its key is configured.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -180,9 +211,7 @@ function registerSearchTool(ctx, current) {
       const query = queryOf(args)
       const maxResults = resultLimit(args, current)
       const signal = requestSignal(exec.signal, current.timeoutMs)
-      return selectedProvider(current) === 'tavily'
-        ? searchTavily(query, maxResults, args.freshness, current, signal)
-        : searchBrave(query, maxResults, args.freshness, current, signal)
+      return search(query, maxResults, args.freshness, signal)
     },
     presentCall(args) {
       return { card: 'generic', title: `Search web: ${args.query}`, kind: 'other', rawInput: args }

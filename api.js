@@ -48,7 +48,9 @@ function errorDetails(payload) {
 export function providerError(provider, response, text) {
   const details = errorDetails(parseJSON(text))
   const requestId = response.headers.get('x-request-id') ?? response.headers.get('request-id')
-  return new Error(`${provider} Search API request failed with HTTP ${response.status}${details ? `: ${details.slice(0, 500)}` : ''}${requestId ? `; request-id=${requestId}` : ''}`)
+  const error = new Error(`${provider} Search API request failed with HTTP ${response.status}${details ? `: ${details.slice(0, 500)}` : ''}${requestId ? `; request-id=${requestId}` : ''}`)
+  error.statusCode = response.status
+  return error
 }
 
 export async function responseJSON(provider, response, maxBytes) {

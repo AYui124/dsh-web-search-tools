@@ -10,6 +10,7 @@ function config(overrides = {}) {
     tavilyBaseURL: 'https://tavily.example/v1',
     braveBaseURL: 'https://brave.example/res/v1',
     timeoutMs: 10_000,
+    tavilyQuotaCooldownMs: 600_000,
     maxResults: 10,
     maxResponseBytes: 100_000,
     maxSnippetChars: 1_000,
@@ -129,6 +130,60 @@ test('uses Brave when only the Brave key is configured', { concurrency: false },
     assert.equal(captured.url.searchParams.get('freshness'), 'pm')
     assert.equal(captured.init.headers['X-Subscription-Token'], 'brave-secret')
     assert.equal(result.provider, 'brave')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+for (const status of [432, 433]) {
+  test(`falls back to Brave and cools down Tavily after HTTP ${status}`, { concurrency: false }, async () => {
+    const { ctx, definitions } = harness()
+    apply(ctx, config({ tavilyQuotaCooldownMs: 100 }))
+    const originalFetch = globalThis.fetch
+    const originalDateNow = Date.now
+    const providers = []
+    let now = 1_000
+    let tavilyRequests = 0
+    Date.now = () => now
+    globalThis.fetch = async url => {
+      const provider = String(url).includes('tavily.example') ? 'tavily' : 'brave'
+      providers.push(provider)
+      if (provider === 'tavily') {
+        tavilyRequests += 1
+        if (tavilyRequests === 1) return new Response(JSON.stringify({ error: 'usage limit reached' }), { status })
+        return new Response(JSON.stringify({ results: [{ title: 'Recovered', url: 'https://recovered.example' }] }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ web: { results: [{ title: 'Fallback', url: 'https://fallback.example' }] } }), { status: 200 })
+    }
+    try {
+      const first = await definitions.get('search_web').execute({ query: 'first' }, exec)
+      const second = await definitions.get('search_web').execute({ query: 'second' }, exec)
+      now += 101
+      const third = await definitions.get('search_web').execute({ query: 'third' }, exec)
+      assert.equal(first.provider, 'brave')
+      assert.equal(second.provider, 'brave')
+      assert.equal(third.provider, 'tavily')
+      assert.deepEqual(providers, ['tavily', 'brave', 'brave', 'tavily'])
+    } finally {
+      globalThis.fetch = originalFetch
+      Date.now = originalDateNow
+    }
+  })
+}
+
+test('reports a clear cooldown error when Tavily quota fails without Brave', { concurrency: false }, async () => {
+  const { ctx, definitions } = harness()
+  apply(ctx, config({ braveApiKey: '', tavilyQuotaCooldownMs: 60_000 }))
+  const originalFetch = globalThis.fetch
+  let requests = 0
+  globalThis.fetch = async () => {
+    requests += 1
+    return new Response(JSON.stringify({ error: 'usage limit reached' }), { status: 432 })
+  }
+  try {
+    await assert.rejects(() => definitions.get('search_web').execute({ query: 'first' }, exec), /temporarily disabled and no Brave key/u)
+    await assert.rejects(() => definitions.get('search_web').execute({ query: 'second' }, exec), /approximately .* more seconds/u)
+    assert.equal(requests, 1)
   } finally {
     globalThis.fetch = originalFetch
   }

@@ -4,13 +4,14 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const NS = 'web-search-tools'
-    const FIELDS = ['disableBuiltInSearch', 'tavilyBaseURL', 'braveBaseURL', 'timeoutMs', 'maxResults', 'maxResponseBytes', 'maxSnippetChars']
+    const FIELDS = ['disableBuiltInSearch', 'tavilyBaseURL', 'braveBaseURL', 'timeoutMs', 'tavilyQuotaCooldownMs', 'maxResults', 'maxResponseBytes', 'maxSnippetChars']
     const SECRET_FIELDS = ['tavilyApiKey', 'braveApiKey']
     const defaults = {
       disableBuiltInSearch: true,
       tavilyBaseURL: 'https://api.tavily.com',
       braveBaseURL: 'https://api.search.brave.com/res/v1',
       timeoutMs: 30000,
+      tavilyQuotaCooldownMs: 600000,
       maxResults: 10,
       maxResponseBytes: 2097152,
       maxSnippetChars: 2000,
@@ -28,7 +29,7 @@ window.__ModuleLoader__.load({
         credentials: 'Search providers', limits: 'Request and output limits', tavilyBaseURL: 'Tavily base URL', braveBaseURL: 'Brave base URL',
         tavilyApiKey: 'Tavily API key', braveApiKey: 'Brave subscription token', secretHint: 'Leave blank to keep the saved secret unchanged.',
         clearTavilyApiKey: 'Clear saved Tavily API key', clearBraveApiKey: 'Clear saved Brave subscription token',
-        timeoutMs: 'Request timeout (ms)', maxResults: 'Maximum results per call', maxResponseBytes: 'Maximum response bytes', maxSnippetChars: 'Maximum characters per snippet',
+        timeoutMs: 'Request timeout (ms)', tavilyQuotaCooldownMs: 'Tavily quota cooldown (ms)', maxResults: 'Maximum results per call', maxResponseBytes: 'Maximum response bytes', maxSnippetChars: 'Maximum characters per snippet',
         save: 'Save settings', saving: 'Saving…', saved: 'Settings saved.', refused: 'The Host refused this change. Refresh and try again.',
         failed: 'Could not save: {message}', reset: 'Restore defaults', resetConfirm: 'Restore all fields, including saved API keys, to their composed defaults?',
       },
@@ -39,7 +40,7 @@ window.__ModuleLoader__.load({
         credentials: '搜索提供商', limits: '请求与输出限制', tavilyBaseURL: 'Tavily 基础 URL', braveBaseURL: 'Brave 基础 URL',
         tavilyApiKey: 'Tavily API Key', braveApiKey: 'Brave Subscription Token', secretHint: '留空将保持已保存的密钥不变。',
         clearTavilyApiKey: '清除已保存的 Tavily API Key', clearBraveApiKey: '清除已保存的 Brave Subscription Token',
-        timeoutMs: '请求超时（毫秒）', maxResults: '单次最大结果数', maxResponseBytes: '最大响应字节数', maxSnippetChars: '每条摘要最大字符数',
+        timeoutMs: '请求超时（毫秒）', tavilyQuotaCooldownMs: 'Tavily 配额冷却时间（毫秒）', maxResults: '单次最大结果数', maxResponseBytes: '最大响应字节数', maxSnippetChars: '每条摘要最大字符数',
         save: '保存配置', saving: '保存中…', saved: '配置已保存。', refused: 'Host 拒绝了本次修改，请刷新后重试。',
         failed: '保存失败：{message}', reset: '恢复默认值', resetConfirm: '确定让所有字段（包括已保存的 API Key）恢复为组合默认值吗？',
       },
@@ -153,7 +154,8 @@ window.__ModuleLoader__.load({
           ),
           h('section', { className: 'wst-group' },
             h('h4', null, t('limits')),
-            numberField('timeoutMs', 1, 2147483647), numberField('maxResults', 1, 20),
+            numberField('timeoutMs', 1, 2147483647), numberField('tavilyQuotaCooldownMs', 1, 2147483647),
+            numberField('maxResults', 1, 20),
             numberField('maxResponseBytes', 1, Number.MAX_SAFE_INTEGER), numberField('maxSnippetChars', 100, 10000),
           ),
           !form.state.writable ? h('p', { className: 'wst-status wst-error', role: 'status' }, t('readOnly')) : null,

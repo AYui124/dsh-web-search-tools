@@ -1,6 +1,6 @@
 {
   "name": "@ayui124/dsh-web-search-tools",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": false,
   "description": "Tavily and Brave Search tools for DeepSeek Harness agents",
   "type": "module",
