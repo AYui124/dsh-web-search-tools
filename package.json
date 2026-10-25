@@ -1,8 +1,27 @@
 {
   "name": "@ayui124/dsh-web-search-tools",
-  "version": "1.0.5",
-  "private": false,
+  "version": "1.0.6",
   "description": "Tavily and Brave Search tools for DeepSeek Harness agents",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "cordis",
+    "agent-tools",
+    "web-search",
+    "tavily",
+    "brave-search"
+  ],
+  "homepage": "https://github.com/AYui124/dsh-web-search-tools#readme",
+  "bugs": {
+    "url": "https://github.com/AYui124/dsh-web-search-tools/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AYui124/dsh-web-search-tools.git"
+  },
+  "author": "AYui124",
+  "license": "MIT",
+  "private": false,
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -17,10 +36,21 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "test": "node --test"
+    "check": "node --check index.js && node --check api.js && node --check client.js",
+    "test": "node --test",
+    "verify": "npm run check && npm test",
+    "prepublishOnly": "npm run verify"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "~3.18.5"

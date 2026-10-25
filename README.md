@@ -12,6 +12,46 @@
 
 工具返回统一、受限的结构：`provider`、`query`、可选 `answer`、`results[]` 和 `truncated`。每条结果最多包含标题、URL、摘要、发布时间和相关度分数；`provider` 会说明本次实际使用了 Tavily 还是 Brave。
 
+## 安装
+
+推荐通过 DeepSeek Harness 的 Plugin Manager 安装版本固定的 npm 包，不要手动编辑 Profile 的 `package.json` 或 `cordis.patch.yml`。
+
+### 从 npm 安装（推荐）
+
+发布到 npm 后，在 Plugin Manager 中使用：
+
+```text
+@ayui124/dsh-web-search-tools@<version>
+```
+
+Registry：
+
+```text
+https://registry.npmjs.org/
+```
+
+生产环境建议固定明确版本，例如：
+
+```text
+@ayui124/dsh-web-search-tools@1.0.6
+```
+
+### 从 Git Tag 安装
+
+npm 包尚未发布或需要测试指定提交时，可以安装不可变 Git Tag：
+
+```text
+git+https://github.com/AYui124/dsh-web-search-tools.git#v<version>
+```
+
+例如：
+
+```text
+git+https://github.com/AYui124/dsh-web-search-tools.git#v1.0.6
+```
+
+不要使用可移动的 `main` 分支作为生产安装源。升级时发布新版本和新 Tag，再通过 Plugin Manager 替换旧版本。安装完成后打开 `dsh-web-search-tools` 组件行的配置页面填写 Tavily 或 Brave Key。
+
 ## 配置
 
 安装后，在主界面的“插件 → 已安装”中打开本插件，再点击 `dsh-web-search-tools` 行的“配置”：
@@ -62,3 +102,37 @@ Tavily 返回 HTTP 432 或 433 时会被视为使用次数或配额不足。若�
 - 不返回提供商原始响应，也不会把 API Key 写入工具参数、错误或结果。
 
 API 参数参考：[Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search) 和 [Brave Search API](https://api.search.brave.com/app/documentation/web-search/get-started)。
+
+## 发布 npm 包
+
+仓库通过 `.github/workflows/publish.yml` 发布公共 npm 包。工作流会在推送 `v*` Tag 或手动触发时执行：
+
+1. 校验 Git Tag 与 `package.json` 版本一致。
+2. 使用 Node.js 24 和 `npm ci --ignore-scripts` 安装锁定依赖。
+3. 执行语法检查和全部测试。
+4. 检查 npm 包内容。
+5. 使用 provenance 发布公共 scoped package。
+
+发布前需要：
+
+1. npm 账号或 Organization 拥有 `@ayui124` Scope。
+2. 在 GitHub 仓库 `Settings → Secrets and variables → Actions` 中创建 `NPM_TOKEN`。
+3. Token 对 `@ayui124/dsh-web-search-tools` 具有 Read and write 权限，并满足 npm 账号的 2FA 发布策略。
+4. 确保目标版本尚未在 npm 发布；npm 不允许覆盖同一版本。
+
+首次发布当前版本时，确认 `NPM_TOKEN` 已配置后创建并推送与版本完全一致的 Tag：
+
+```bash
+git tag -a v1.0.6 -m "Release v1.0.6"
+git push origin main
+git push origin v1.0.6
+```
+
+后续发布可以先更新版本并提交：
+
+```bash
+npm version patch
+git push origin main --follow-tags
+```
+
+`npm version patch` 会更新 `package.json` 和 `package-lock.json`、创建版本提交及对应 Tag。Tag 推送后 GitHub Actions 会自动发布。不要把 npm Token 写入仓库、`.npmrc`、源码或日志。
