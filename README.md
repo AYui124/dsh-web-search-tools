@@ -33,7 +33,7 @@ https://registry.npmjs.org/
 生产环境建议固定明确版本，例如：
 
 ```text
-@ayui124/dsh-web-search-tools@1.0.6
+@ayui124/dsh-web-search-tools@1.0.7
 ```
 
 ### 从 Git Tag 安装
@@ -47,7 +47,7 @@ git+https://github.com/AYui124/dsh-web-search-tools.git#v<version>
 例如：
 
 ```text
-git+https://github.com/AYui124/dsh-web-search-tools.git#v1.0.6
+git+https://github.com/AYui124/dsh-web-search-tools.git#v1.0.7
 ```
 
 不要使用可移动的 `main` 分支作为生产安装源。升级时发布新版本和新 Tag，再通过 Plugin Manager 替换旧版本。安装完成后打开 `dsh-web-search-tools` 组件行的配置页面填写 Tavily 或 Brave Key。
@@ -105,27 +105,39 @@ API 参数参考：[Tavily Search API](https://docs.tavily.com/documentation/api
 
 ## 发布 npm 包
 
-仓库通过 `.github/workflows/publish.yml` 发布公共 npm 包。工作流会在推送 `v*` Tag 或手动触发时执行：
+仓库通过 `.github/workflows/publish.yml` 和 npm Trusted Publishing 发布公共包，不使用长期 npm Token。工作流会在推送 `v*` Tag 或手动触发时执行：
 
-1. 校验 Git Tag 与 `package.json` 版本一致。
-2. 使用 Node.js 24 和 `npm ci --ignore-scripts` 安装锁定依赖。
-3. 执行语法检查和全部测试。
-4. 检查 npm 包内容。
-5. 使用 provenance 发布公共 scoped package。
+1. 获取 GitHub OIDC 身份令牌。
+2. 校验 Git Tag 与 `package.json` 版本一致。
+3. 使用 Node.js 24，并安装支持 Trusted Publishing 的 npm 11。
+4. 使用 `npm ci --ignore-scripts` 安装锁定依赖。
+5. 执行语法检查、全部测试和 npm 包内容检查。
+6. 使用 provenance 发布公共 scoped package。
 
-发布前需要：
+npm Package Settings 中的 Trusted Publisher 必须配置为：
 
-1. npm 账号或 Organization 拥有 `@ayui124` Scope。
-2. 在 GitHub 仓库 `Settings → Secrets and variables → Actions` 中创建 `NPM_TOKEN`。
-3. Token 对 `@ayui124/dsh-web-search-tools` 具有 Read and write 权限，并满足 npm 账号的 2FA 发布策略。
-4. 确保目标版本尚未在 npm 发布；npm 不允许覆盖同一版本。
+- Provider：GitHub Actions
+- Organization or user：`AYui124`
+- Repository：`dsh-web-search-tools`
+- Workflow filename：`publish.yml`
+- Environment：留空（当前 Workflow 未使用 GitHub Environment）
 
-首次发布当前版本时，确认 `NPM_TOKEN` 已配置后创建并推送与版本完全一致的 Tag：
+GitHub Workflow 只需要以下权限：
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+```
+
+不需要配置 `NPM_TOKEN`，也不要在 GitHub Secrets、仓库 `.npmrc`、源码或日志中保存 npm Token。
+
+发布前需要确保目标版本尚未在 npm 发布；npm 不允许覆盖同一版本。发布 `1.0.7` 时创建并推送与 `package.json` 完全一致的 Tag：
 
 ```bash
-git tag -a v1.0.6 -m "Release v1.0.6"
+git tag -a v1.0.7 -m "Release v1.0.7"
 git push origin main
-git push origin v1.0.6
+git push origin v1.0.7
 ```
 
 后续发布可以先更新版本并提交：
@@ -135,4 +147,4 @@ npm version patch
 git push origin main --follow-tags
 ```
 
-`npm version patch` 会更新 `package.json` 和 `package-lock.json`、创建版本提交及对应 Tag。Tag 推送后 GitHub Actions 会自动发布。不要把 npm Token 写入仓库、`.npmrc`、源码或日志。
+`npm version patch` 会更新 `package.json` 和 `package-lock.json`、创建版本提交及对应 Tag。Tag 推送后 GitHub Actions 会通过 OIDC 自动发布。

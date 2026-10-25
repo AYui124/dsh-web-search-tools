@@ -1,6 +1,6 @@
 {
   "name": "@ayui124/dsh-web-search-tools",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Tavily and Brave Search tools for DeepSeek Harness agents",
   "keywords": [
     "deepseek",
