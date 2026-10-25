@@ -18,23 +18,29 @@ function config(overrides = {}) {
   }
 }
 
-function harness() {
+function harness({ agentToolNames = ['web_search'] } = {}) {
   const definitions = new Map()
   const restrictions = []
   const listeners = new Map()
-  const createAgent = () => ({
-    ctx: {
-      tools: {
-        restrict(filter) {
-          restrictions.push(filter)
-          return () => {
-            const index = restrictions.indexOf(filter)
-            if (index >= 0) restrictions.splice(index, 1)
-          }
+  const createAgent = () => {
+    const agent = {
+      ctx: {
+        tools: {
+          schemas() {
+            return agentToolNames.map(name => ({ name }))
+          },
+          restrict(filter) {
+            restrictions.push(filter)
+            return () => {
+              const index = restrictions.indexOf(filter)
+              if (index >= 0) restrictions.splice(index, 1)
+            }
+          },
         },
       },
-    },
-  })
+    }
+    return agent
+  }
   const agent = createAgent()
   return {
     definitions,
@@ -72,6 +78,14 @@ test('hides the built-in web_search tool for existing and future agents', () => 
   assert.deepEqual(restrictions, [{ deny: ['web_search'] }])
   listeners.get('agent/created')({ agent: createAgent() })
   assert.deepEqual(restrictions, [{ deny: ['web_search'] }, { deny: ['web_search'] }])
+})
+
+test('skips the stale restriction when this DSH has no web_search tool', () => {
+  const { ctx, restrictions, listeners, createAgent } = harness({ agentToolNames: ['search_web'] })
+  apply(ctx, config())
+  assert.deepEqual(restrictions, [])
+  assert.doesNotThrow(() => listeners.get('agent/created')({ agent: createAgent() }))
+  assert.deepEqual(restrictions, [])
 })
 
 test('keeps the built-in web_search tool available when suppression is disabled', () => {

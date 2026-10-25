@@ -224,6 +224,8 @@ function restrictBuiltInSearch(ctx, current) {
   ctx.effect(() => {
     const disposers = new Set()
     const restrict = agent => {
+      const available = agent.ctx.tools.schemas(agent).some(schema => schema?.name === 'web_search')
+      if (!available) return
       const dispose = agent.ctx.tools.restrict({ deny: ['web_search'] })
       disposers.add(dispose)
     }
