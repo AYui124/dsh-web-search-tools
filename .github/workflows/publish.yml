@@ -57,5 +57,5 @@ jobs:
       - name: Inspect package contents
         run: npm pack --dry-run --json
 
-      - name: Publish public package with Trusted Publishing
-        run: npm publish --access public --provenance
+      - name: Stage public package with Trusted Publishing
+        run: npm stage publish --access public --provenance

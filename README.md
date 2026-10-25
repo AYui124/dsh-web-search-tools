@@ -112,7 +112,8 @@ API 参数参考：[Tavily Search API](https://docs.tavily.com/documentation/api
 3. 使用 Node.js 24，并安装支持 Trusted Publishing 的 npm 11。
 4. 使用 `npm ci --ignore-scripts` 安装锁定依赖。
 5. 执行语法检查、全部测试和 npm 包内容检查。
-6. 使用 provenance 发布公共 scoped package。
+6. 使用 provenance 将公共 scoped package 提交到 npm staging area。
+7. 维护者在 npmjs.com 或 CLI 中检查并通过 2FA 审批，审批后版本才会公开。
 
 npm Package Settings 中的 Trusted Publisher 必须配置为：
 
@@ -132,13 +133,22 @@ permissions:
 
 不需要配置 `NPM_TOKEN`，也不要在 GitHub Secrets、仓库 `.npmrc`、源码或日志中保存 npm Token。
 
-发布前需要确保目标版本尚未在 npm 发布；npm 不允许覆盖同一版本。发布 `1.0.7` 时创建并推送与 `package.json` 完全一致的 Tag：
+发布前需要确保目标版本尚未在 npm 发布或 staging area 中；npm 不允许覆盖同一版本。创建并推送与 `package.json` 完全一致的 Tag 后，Workflow 只会暂存版本，不会立即公开：
 
 ```bash
-git tag -a v1.0.7 -m "Release v1.0.7"
+git tag -a v1.0.8 -m "Release v1.0.8"
 git push origin main
-git push origin v1.0.7
+git push origin v1.0.8
 ```
+
+Workflow 成功后，在 npmjs.com 的 **Staged Packages** 页面检查并点击 **Approve**；也可以使用已登录且启用 2FA 的 npm CLI：
+
+```bash
+npm stage list @ayui124/dsh-web-search-tools
+npm stage approve
+```
+
+审批完成后，版本才会进入公开 Registry 并更新 `latest`。Staging 本身不需要长期 npm Token，但审批始终需要维护者完成 2FA。
 
 后续发布可以先更新版本并提交：
 
@@ -147,4 +157,4 @@ npm version patch
 git push origin main --follow-tags
 ```
 
-`npm version patch` 会更新 `package.json` 和 `package-lock.json`、创建版本提交及对应 Tag。Tag 推送后 GitHub Actions 会通过 OIDC 自动发布。
+`npm version patch` 会更新 `package.json` 和 `package-lock.json`、创建版本提交及对应 Tag。Tag 推送后 GitHub Actions 会通过 OIDC 暂存版本，维护者审批后完成公开发布。
