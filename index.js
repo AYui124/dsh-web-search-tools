@@ -2,16 +2,123 @@ import z from '@deepseek-ai/schemastery'
 import { endpointURL, normalizeBrave, normalizeTavily, responseJSON } from './api.js'
 
 export const name = 'web-search-tools'
-export const inject = ['tools', 'agents']
+export const inject = ['tools', 'agents', 'credentials', 'configEditor']
 
 const MAX_TIMER_MS = 2_147_483_647
 const DEFAULT_TAVILY_QUOTA_COOLDOWN_MS = 10 * 60 * 1_000
 const TAVILY_QUOTA_STATUSES = new Set([432, 433])
+const ENTRY_ID = 'dsh-web-search-tools'
+const DEFAULT_TAVILY_API_KEY_REF = 'TAVILY_API_KEY'
+const DEFAULT_BRAVE_API_KEY_REF = 'BRAVE_SEARCH_API_KEY'
+const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u
+const LEGACY_CREDENTIALS = [
+  { field: 'tavilyApiKey', refField: 'tavilyApiKeyEnv' },
+  { field: 'braveApiKey', refField: 'braveApiKeyEnv' },
+]
+
+function ownConfiguration(ctx) {
+  const matches = ctx.configEditor.configuration().filter(({ entry }) => entry.id === ENTRY_ID)
+  if (matches.length !== 1) throw new Error(`expected exactly one ${ENTRY_ID} configuration row, found ${matches.length}`)
+  return matches[0]
+}
+
+function legacyApiKeys(ctx) {
+  const override = ownConfiguration(ctx).override
+  return Object.fromEntries(LEGACY_CREDENTIALS.map(({ field }) => {
+    const value = override[field]
+    return [field, typeof value === 'string' && value.trim().length > 0 ? value.trim() : '']
+  }))
+}
+
+async function removeLegacyApiKeys(ctx, fields) {
+  if (fields.size === 0) return
+  const own = ownConfiguration(ctx)
+  await ctx.configEditor.edit(own.entry, current => {
+    const next = { ...current }
+    for (const field of fields) delete next[field]
+    return next
+  })
+}
+
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function credentialRefs(config) {
+  const resolved = resolveConfig(config)
+  for (const ref of [resolved.tavilyApiKeyEnv, resolved.braveApiKeyEnv]) {
+    if (!CREDENTIAL_REF_PATTERN.test(ref)) throw new Error(`Invalid DSH credential reference: ${ref}`)
+  }
+  if (resolved.tavilyApiKeyEnv === resolved.braveApiKeyEnv) throw new Error('Tavily and Brave credential references must be different.')
+  return resolved
+}
+
+function createCredentialMigration(ctx, config, logger) {
+  let running
+  return () => {
+    if (running !== undefined) return running
+    running = (async () => {
+      let legacy
+      try {
+        legacy = legacyApiKeys(ctx)
+      } catch (error) {
+        logger?.warn?.(`failed to inspect legacy search API keys: ${errorText(error)}`)
+        return
+      }
+      const pending = LEGACY_CREDENTIALS.filter(({ field }) => legacy[field].length > 0)
+      if (pending.length === 0) return
+      let resolved
+      try {
+        resolved = credentialRefs(config)
+      } catch (error) {
+        logger?.warn?.(`failed to validate search credential references during migration: ${errorText(error)}`)
+        return
+      }
+      const secured = new Set()
+      for (const { field, refField } of pending) {
+        try {
+          const existing = await ctx.credentials.resolve(resolved[refField])
+          if (existing === undefined) await ctx.credentials.set(resolved[refField], legacy[field])
+          else logger?.warn?.(`preserved existing ${refField} credential instead of overwriting it with legacy plugin config`)
+          secured.add(field)
+        } catch (error) {
+          logger?.warn?.(`failed to migrate legacy ${field} into DSH Credentials: ${errorText(error)}`)
+        }
+      }
+      try {
+        await removeLegacyApiKeys(ctx, secured)
+      } catch (error) {
+        logger?.warn?.(`failed to remove migrated search API keys from plugin config: ${errorText(error)}`)
+      }
+    })().finally(() => { running = undefined })
+    return running
+  }
+}
+
+async function requestConfig(ctx, config, migrate) {
+  await migrate()
+  const resolved = credentialRefs(config)
+  let legacy = { tavilyApiKey: '', braveApiKey: '' }
+  try {
+    legacy = legacyApiKeys(ctx)
+  } catch {}
+  const [tavily, brave] = await Promise.all([
+    ctx.credentials.resolve(resolved.tavilyApiKeyEnv),
+    ctx.credentials.resolve(resolved.braveApiKeyEnv),
+  ])
+  return {
+    ...resolved,
+    tavilyApiKey: tavily?.value ?? legacy.tavilyApiKey,
+    braveApiKey: brave?.value ?? legacy.braveApiKey,
+  }
+}
+
+const credentialRefSchema = description => z.string().pattern(CREDENTIAL_REF_PATTERN).volatile().description(description)
 
 export const Config = z.object({
   disableBuiltInSearch: z.boolean().default(true).description('Hide and deny the built-in web_search tool for all agents. This does not disable web_fetch.'),
-  tavilyApiKey: z.string().role('secret').default('').volatile().description('Tavily API key. When both provider keys are configured, Tavily is preferred.'),
-  braveApiKey: z.string().role('secret').default('').volatile().description('Brave Search API subscription token. Used only when no Tavily API key is configured.'),
+  tavilyApiKeyEnv: credentialRefSchema('Credential reference resolved through DSH Credentials for Tavily. The secret value is never stored in plugin config.').default(DEFAULT_TAVILY_API_KEY_REF),
+  braveApiKeyEnv: credentialRefSchema('Credential reference resolved through DSH Credentials for Brave Search. The secret value is never stored in plugin config.').default(DEFAULT_BRAVE_API_KEY_REF),
   tavilyBaseURL: z.string().default('https://api.tavily.com').volatile().description('Tavily API root URL.'),
   braveBaseURL: z.string().default('https://api.search.brave.com/res/v1').volatile().description('Brave Search API root URL.'),
   timeoutMs: z.natural().min(1).max(MAX_TIMER_MS).default(30_000).volatile().description('Search API request timeout in milliseconds.'),
@@ -75,12 +182,10 @@ function integer(value, fallback, minimum, maximum) {
 }
 
 function resolveConfig(config) {
-  const tavilyApiKey = readValue(config.tavilyApiKey)
-  const braveApiKey = readValue(config.braveApiKey)
   return {
     disableBuiltInSearch: readValue(config.disableBuiltInSearch) !== false,
-    tavilyApiKey: typeof tavilyApiKey === 'string' ? tavilyApiKey.trim() : '',
-    braveApiKey: typeof braveApiKey === 'string' ? braveApiKey.trim() : '',
+    tavilyApiKeyEnv: text(readValue(config.tavilyApiKeyEnv), DEFAULT_TAVILY_API_KEY_REF),
+    braveApiKeyEnv: text(readValue(config.braveApiKeyEnv), DEFAULT_BRAVE_API_KEY_REF),
     tavilyBaseURL: text(readValue(config.tavilyBaseURL), 'https://api.tavily.com'),
     braveBaseURL: text(readValue(config.braveBaseURL), 'https://api.search.brave.com/res/v1'),
     timeoutMs: integer(readValue(config.timeoutMs), 30_000, 1, MAX_TIMER_MS),
@@ -165,9 +270,10 @@ async function searchBrave(query, maxResults, freshness, config, signal) {
   return normalizeBrave(payload, query, maxResults, config.maxSnippetChars)
 }
 
-function createSearchRouter(config) {
+function createSearchRouter(loadConfig) {
   let tavilyDisabledUntil = 0
   return async (query, maxResults, freshness, signal) => {
+    const config = await loadConfig()
     const tavilyConfigured = config.tavilyApiKey.length > 0
     const braveConfigured = config.braveApiKey.length > 0
     if (tavilyConfigured && Date.now() >= tavilyDisabledUntil) {
@@ -189,11 +295,20 @@ function createSearchRouter(config) {
   }
 }
 
-function registerSearchTool(ctx, current) {
-  const search = createSearchRouter(current)
+function registerSearchTool(ctx, current, loadConfig) {
+  const search = createSearchRouter(loadConfig)
   ctx.tools.register({
     name: 'search_web',
     description: 'Search the current web through the configured provider. Tavily is preferred; HTTP 432 or 433 temporarily routes searches to Brave when its key is configured.',
+    snowlumaCapability: {
+      label: '联网搜索',
+      description: '查询公开网页上的最新资料。',
+      sourceKind: 'plugin',
+      sourceLabel: '插件 dsh-web-search-tools',
+      sourcePackage: '@ayui124/dsh-web-search-tools',
+      risk: 'medium',
+      riskReason: '会把查询内容发送给配置的网页搜索服务。',
+    },
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -245,6 +360,11 @@ export function apply(ctx, config) {
       return resolveConfig(config)[property]
     },
   })
+  const logger = typeof ctx.logger === 'function' ? ctx.logger(name) : ctx.logger
+  const migrate = createCredentialMigration(ctx, current, logger)
+  const loadConfig = () => requestConfig(ctx, current, migrate)
+  queueMicrotask(() => { void migrate() })
+  ctx.on('plugin-manager/changed', () => { void migrate() })
   restrictBuiltInSearch(ctx, current)
-  registerSearchTool(ctx, current)
+  registerSearchTool(ctx, current, loadConfig)
 }

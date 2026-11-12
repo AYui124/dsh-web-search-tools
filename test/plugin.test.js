@@ -5,8 +5,8 @@ import { apply } from '../index.js'
 function config(overrides = {}) {
   return {
     disableBuiltInSearch: true,
-    tavilyApiKey: 'tvly-secret',
-    braveApiKey: 'brave-secret',
+    tavilyApiKeyEnv: 'TAVILY_API_KEY',
+    braveApiKeyEnv: 'BRAVE_SEARCH_API_KEY',
     tavilyBaseURL: 'https://tavily.example/v1',
     braveBaseURL: 'https://brave.example/res/v1',
     timeoutMs: 10_000,
@@ -18,10 +18,21 @@ function config(overrides = {}) {
   }
 }
 
-function harness({ agentToolNames = ['web_search'] } = {}) {
+function harness({
+  agentToolNames = ['web_search'],
+  credentials = { TAVILY_API_KEY: 'tvly-secret', BRAVE_SEARCH_API_KEY: 'brave-secret' },
+  legacy = {},
+  setFailures = {},
+  editFailures = 0,
+} = {}) {
   const definitions = new Map()
   const restrictions = []
   const listeners = new Map()
+  const credentialValues = new Map(Object.entries(credentials))
+  const remainingSetFailures = new Map(Object.entries(setFailures))
+  let remainingEditFailures = editFailures
+  let configOverride = { ...legacy }
+  const configEntry = { id: 'dsh-web-search-tools', options: { name: '@ayui124/dsh-web-search-tools' } }
   const createAgent = () => {
     const agent = {
       ctx: {
@@ -47,6 +58,9 @@ function harness({ agentToolNames = ['web_search'] } = {}) {
     restrictions,
     listeners,
     createAgent,
+    credentialValues,
+    get configOverride() { return configOverride },
+    emit(name, ...args) { for (const listener of listeners.get(name) ?? []) listener(...args) },
     ctx: {
       tools: {
         register(definition) {
@@ -57,8 +71,37 @@ function harness({ agentToolNames = ['web_search'] } = {}) {
       agents: { list: () => [agent] },
       effect(callback) { return callback() },
       on(name, listener) {
-        listeners.set(name, listener)
-        return () => listeners.delete(name)
+        const list = listeners.get(name) ?? []
+        list.push(listener)
+        listeners.set(name, list)
+        return () => listeners.set(name, list.filter(value => value !== listener))
+      },
+      logger: { warn() {} },
+      credentials: {
+        async resolve(ref) {
+          const value = credentialValues.get(ref)
+          return value === undefined ? undefined : { value, source: 'test-store' }
+        },
+        async set(ref, value) {
+          const remaining = remainingSetFailures.get(ref) ?? 0
+          if (remaining > 0) {
+            remainingSetFailures.set(ref, remaining - 1)
+            throw new Error(`simulated credential write failure for ${ref}`)
+          }
+          credentialValues.set(ref, value)
+        },
+        async unset(ref) { credentialValues.delete(ref) },
+      },
+      configEditor: {
+        configuration() { return [{ entry: configEntry, inherited: {}, override: { ...configOverride } }] },
+        async edit(entry, change) {
+          assert.equal(entry, configEntry)
+          if (remainingEditFailures > 0) {
+            remainingEditFailures -= 1
+            throw new Error('simulated config cleanup failure')
+          }
+          configOverride = change({ ...configOverride }, {})
+        },
       },
     },
   }
@@ -70,13 +113,18 @@ test('registers one unified search tool', () => {
   const { ctx, definitions } = harness()
   apply(ctx, config())
   assert.deepEqual([...definitions.keys()], ['search_web'])
+  assert.deepEqual(definitions.get('search_web').snowlumaCapability, {
+    label: '联网搜索', description: '查询公开网页上的最新资料。', sourceKind: 'plugin',
+    sourceLabel: '插件 dsh-web-search-tools', sourcePackage: '@ayui124/dsh-web-search-tools',
+    risk: 'medium', riskReason: '会把查询内容发送给配置的网页搜索服务。',
+  })
 })
 
 test('hides the built-in web_search tool for existing and future agents', () => {
   const { ctx, restrictions, listeners, createAgent } = harness()
   apply(ctx, config())
   assert.deepEqual(restrictions, [{ deny: ['web_search'] }])
-  listeners.get('agent/created')({ agent: createAgent() })
+  listeners.get('agent/created')[0]({ agent: createAgent() })
   assert.deepEqual(restrictions, [{ deny: ['web_search'] }, { deny: ['web_search'] }])
 })
 
@@ -84,7 +132,7 @@ test('skips the stale restriction when this DSH has no web_search tool', () => {
   const { ctx, restrictions, listeners, createAgent } = harness({ agentToolNames: ['search_web'] })
   apply(ctx, config())
   assert.deepEqual(restrictions, [])
-  assert.doesNotThrow(() => listeners.get('agent/created')({ agent: createAgent() }))
+  assert.doesNotThrow(() => listeners.get('agent/created')[0]({ agent: createAgent() }))
   assert.deepEqual(restrictions, [])
 })
 
@@ -94,12 +142,107 @@ test('keeps the built-in web_search tool available when suppression is disabled'
   assert.deepEqual(restrictions, [])
 })
 
-test('prefers Tavily when both keys are configured', { concurrency: false }, async () => {
+test('migrates both legacy plaintext keys after plugin management settles', async () => {
+  const state = harness({ credentials: {}, legacy: { tavilyApiKey: 'legacy-tavily', braveApiKey: 'legacy-brave' } })
+  apply(state.ctx, config())
+  state.emit('plugin-manager/changed', { reason: 'install' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.credentialValues.get('TAVILY_API_KEY'), 'legacy-tavily')
+  assert.equal(state.credentialValues.get('BRAVE_SEARCH_API_KEY'), 'legacy-brave')
+  assert.equal(Object.hasOwn(state.configOverride, 'tavilyApiKey'), false)
+  assert.equal(Object.hasOwn(state.configOverride, 'braveApiKey'), false)
+})
+
+test('preserves an existing credential instead of overwriting it with stale plaintext', async () => {
+  const state = harness({ credentials: { TAVILY_API_KEY: 'newer-tavily' }, legacy: { tavilyApiKey: 'stale-tavily' } })
+  apply(state.ctx, config())
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.credentialValues.get('TAVILY_API_KEY'), 'newer-tavily')
+  assert.equal(Object.hasOwn(state.configOverride, 'tavilyApiKey'), false)
+})
+
+test('retries a failed credential write and keeps plaintext until the retry succeeds', async () => {
+  const state = harness({ credentials: {}, legacy: { tavilyApiKey: 'legacy-tavily' }, setFailures: { TAVILY_API_KEY: 1 } })
+  apply(state.ctx, config())
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.credentialValues.has('TAVILY_API_KEY'), false)
+  assert.equal(state.configOverride.tavilyApiKey, 'legacy-tavily')
+  state.emit('plugin-manager/changed', { reason: 'install' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.credentialValues.get('TAVILY_API_KEY'), 'legacy-tavily')
+  assert.equal(Object.hasOwn(state.configOverride, 'tavilyApiKey'), false)
+})
+
+test('retries plaintext cleanup after a transient config editor failure', async () => {
+  const state = harness({ credentials: {}, legacy: { tavilyApiKey: 'legacy-tavily' }, editFailures: 1 })
+  apply(state.ctx, config())
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.credentialValues.get('TAVILY_API_KEY'), 'legacy-tavily')
+  assert.equal(state.configOverride.tavilyApiKey, 'legacy-tavily')
+  state.emit('plugin-manager/changed', { reason: 'install' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.credentialValues.get('TAVILY_API_KEY'), 'legacy-tavily')
+  assert.equal(Object.hasOwn(state.configOverride, 'tavilyApiKey'), false)
+})
+
+test('uses migrated credentials on the first search and removes plaintext config', { concurrency: false }, async () => {
+  const state = harness({ credentials: {}, legacy: { tavilyApiKey: 'legacy-tavily', braveApiKey: 'legacy-brave' } })
+  apply(state.ctx, config())
+  const originalFetch = globalThis.fetch
+  let authorization
+  globalThis.fetch = async (_url, init) => {
+    authorization = init.headers.Authorization
+    return new Response(JSON.stringify({ results: [] }), { status: 200 })
+  }
+  try {
+    const result = await state.definitions.get('search_web').execute({ query: 'migration check' }, exec)
+    assert.equal(result.provider, 'tavily')
+    assert.equal(authorization, 'Bearer legacy-tavily')
+    assert.equal(state.credentialValues.get('TAVILY_API_KEY'), 'legacy-tavily')
+    assert.equal(state.credentialValues.get('BRAVE_SEARCH_API_KEY'), 'legacy-brave')
+    assert.equal(Object.hasOwn(state.configOverride, 'tavilyApiKey'), false)
+    assert.equal(Object.hasOwn(state.configOverride, 'braveApiKey'), false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('rejects invalid credential references before resolving secrets', async () => {
   const { ctx, definitions } = harness()
+  apply(ctx, config({ tavilyApiKeyEnv: 'invalid-ref' }))
+  await assert.rejects(() => definitions.get('search_web').execute({ query: 'invalid ref' }, exec), /Invalid DSH credential reference/u)
+})
+
+test('rejects duplicate provider credential references', async () => {
+  const { ctx, definitions } = harness()
+  apply(ctx, config({ braveApiKeyEnv: 'TAVILY_API_KEY' }))
+  await assert.rejects(() => definitions.get('search_web').execute({ query: 'duplicate ref' }, exec), /must be different/u)
+})
+
+test('resolves custom credential references', { concurrency: false }, async () => {
+  const { ctx, definitions } = harness({ credentials: { CUSTOM_TAVILY: 'custom-tavily', CUSTOM_BRAVE: 'custom-brave' } })
+  apply(ctx, config({ tavilyApiKeyEnv: 'CUSTOM_TAVILY', braveApiKeyEnv: 'CUSTOM_BRAVE' }))
+  const originalFetch = globalThis.fetch
+  let authorization
+  globalThis.fetch = async (_url, init) => {
+    authorization = init.headers.Authorization
+    return new Response(JSON.stringify({ results: [] }), { status: 200 })
+  }
+  try {
+    const result = await definitions.get('search_web').execute({ query: 'custom refs' }, exec)
+    assert.equal(result.provider, 'tavily')
+    assert.equal(authorization, 'Bearer custom-tavily')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('prefers Tavily when both credentials are configured', { concurrency: false }, async () => {
+  const { ctx, definitions, credentialValues } = harness()
   const values = config()
   const volatile = Object.fromEntries(Object.keys(values).map(key => [key, { get: () => values[key] }]))
   apply(ctx, volatile)
-  values.tavilyApiKey = 'updated-tvly-secret'
+  credentialValues.set('TAVILY_API_KEY', 'updated-tvly-secret')
   const originalFetch = globalThis.fetch
   let captured
   globalThis.fetch = async (url, init) => {
@@ -127,8 +270,8 @@ test('prefers Tavily when both keys are configured', { concurrency: false }, asy
 })
 
 test('uses Brave when only the Brave key is configured', { concurrency: false }, async () => {
-  const { ctx, definitions } = harness()
-  apply(ctx, config({ tavilyApiKey: '' }))
+  const { ctx, definitions } = harness({ credentials: { BRAVE_SEARCH_API_KEY: 'brave-secret' } })
+  apply(ctx, config())
   const originalFetch = globalThis.fetch
   let captured
   globalThis.fetch = async (url, init) => {
@@ -186,8 +329,8 @@ for (const status of [432, 433]) {
 }
 
 test('reports a clear cooldown error when Tavily quota fails without Brave', { concurrency: false }, async () => {
-  const { ctx, definitions } = harness()
-  apply(ctx, config({ braveApiKey: '', tavilyQuotaCooldownMs: 60_000 }))
+  const { ctx, definitions } = harness({ credentials: { TAVILY_API_KEY: 'tvly-secret' } })
+  apply(ctx, config({ tavilyQuotaCooldownMs: 60_000 }))
   const originalFetch = globalThis.fetch
   let requests = 0
   globalThis.fetch = async () => {
@@ -203,12 +346,12 @@ test('reports a clear cooldown error when Tavily quota fails without Brave', { c
   }
 })
 
-test('provider selection follows live secret changes', { concurrency: false }, async () => {
-  const { ctx, definitions } = harness()
+test('provider selection follows live credential changes', { concurrency: false }, async () => {
+  const { ctx, definitions, credentialValues } = harness()
   const values = config()
   const volatile = Object.fromEntries(Object.keys(values).map(key => [key, { get: () => values[key] }]))
   apply(ctx, volatile)
-  values.tavilyApiKey = ''
+  credentialValues.delete('TAVILY_API_KEY')
   const originalFetch = globalThis.fetch
   let requested
   globalThis.fetch = async url => {
@@ -224,8 +367,8 @@ test('provider selection follows live secret changes', { concurrency: false }, a
   }
 })
 
-test('fails clearly when neither provider key is configured', async () => {
-  const { ctx, definitions } = harness()
-  apply(ctx, config({ tavilyApiKey: '', braveApiKey: '' }))
+test('fails clearly when neither provider credential is configured', async () => {
+  const { ctx, definitions } = harness({ credentials: {} })
+  apply(ctx, config())
   await assert.rejects(() => definitions.get('search_web').execute({ query: 'anything' }, exec), /No search provider API key is configured/u)
 })

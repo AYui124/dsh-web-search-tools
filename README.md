@@ -12,6 +12,8 @@
 
 工具返回统一、受限的结构：`provider`、`query`、可选 `answer`、`results[]` 和 `truncated`。每条结果最多包含标题、URL、摘要、发布时间和相关度分数；`provider` 会说明本次实际使用了 Tavily 还是 Brave。
 
+`search_web` 的 ToolDefinition 携带非模型字段 `snowlumaCapability`，由插件自身声明中文名称、用途、插件包来源和风险。SnowLuma 等能力目录可运行时动态读取，不需要维护工具名到插件包的硬编码映射；metadata 不会进入模型可见 tool schema。
+
 ## 安装
 
 推荐通过 DeepSeek Harness 的 Plugin Manager 安装版本固定的 npm 包，不要手动编辑 Profile 的 `package.json` 或 `cordis.patch.yml`。
@@ -33,7 +35,7 @@ https://registry.npmjs.org/
 生产环境建议固定明确版本，例如：
 
 ```text
-@ayui124/dsh-web-search-tools@1.0.7
+@ayui124/dsh-web-search-tools@1.0.9
 ```
 
 ### 从 Git Tag 安装
@@ -47,7 +49,7 @@ git+https://github.com/AYui124/dsh-web-search-tools.git#v<version>
 例如：
 
 ```text
-git+https://github.com/AYui124/dsh-web-search-tools.git#v1.0.7
+git+https://github.com/AYui124/dsh-web-search-tools.git#v1.0.9
 ```
 
 不要使用可移动的 `main` 分支作为生产安装源。升级时发布新版本和新 Tag，再通过 Plugin Manager 替换旧版本。安装完成后打开 `dsh-web-search-tools` 组件行的配置页面填写 Tavily 或 Brave Key。
@@ -57,8 +59,10 @@ git+https://github.com/AYui124/dsh-web-search-tools.git#v1.0.7
 安装后，在主界面的“插件 → 已安装”中打开本插件，再点击 `dsh-web-search-tools` 行的“配置”：
 
 - `disableBuiltInSearch`：默认开启，阻止 Agent 看到或调用 DeepSeek Harness 内置的 `web_search`；不影响 `web_fetch`。
-- `tavilyApiKey`：Tavily API Key（Secret 字段；优先使用）。
-- `braveApiKey`：Brave Search API subscription token（Secret 字段；Tavily 未配置时使用）。
+- `tavilyApiKeyEnv`：Tavily 的 DSH Credentials 引用，默认 `TAVILY_API_KEY`。
+- `braveApiKeyEnv`：Brave Search 的 DSH Credentials 引用，默认 `BRAVE_SEARCH_API_KEY`。
+- Tavily API Key：通过配置页写入 DSH Credentials；两个凭据都配置时优先使用。
+- Brave Subscription Token：通过配置页写入 DSH Credentials；Tavily 未配置或配额冷却时使用。
 - `tavilyBaseURL`：默认 `https://api.tavily.com`。
 - `braveBaseURL`：默认 `https://api.search.brave.com/res/v1`。
 - `timeoutMs`：单次请求超时，默认 30 秒。
@@ -67,7 +71,9 @@ git+https://github.com/AYui124/dsh-web-search-tools.git#v1.0.7
 - `maxResponseBytes`：提供商 JSON 响应大小上限，默认 2 MiB。
 - `maxSnippetChars`：每条摘要保留字符上限，默认 2000。
 
-Secret 配置为 volatile，修改后后续请求会重新选择提供商，无需为密钥切换重启插件。
+密钥值由 DSH Credentials 持久化，不会写入 `cordis.patch.yml`、插件配置 Schema 或配置读取响应；配置页面只能查看“已配置/未配置”、来源和可写状态，无法读回密钥原文。每个提供商的凭据都有独立的“保存凭据”和“清除凭据”操作，不与普通配置保存合并，避免某一步失败时误报为整体保存成功。每次搜索都会重新解析凭据，因此修改后下一次请求立即生效，无需重启插件。
+
+从旧版本升级时，如果配置中仍有 `tavilyApiKey` 或 `braveApiKey` 明文值，插件会先将它们迁移到对应的 Credentials 引用，写入成功后再从插件配置中删除旧字段。
 
 ### Tavily 配额回退
 
@@ -96,7 +102,8 @@ Tavily 返回 HTTP 432 或 433 时会被视为使用次数或配额不足。若�
 ## 安全与输出控制
 
 - 请求遵从 Agent 的取消信号，并叠加插件超时。
-- Tavily 凭据通过 `Authorization: Bearer` 发送；Brave 凭据通过 `X-Subscription-Token` 发送。
+- Tavily 和 Brave 密钥存储在 DSH Credentials 中，每次调用按引用解析，不进入普通插件配置。
+- Tavily 凭据仅通过 `Authorization: Bearer` 发送；Brave 凭据仅通过 `X-Subscription-Token` 发送。
 - 成功和失败响应都受字节上限约束；错误只提取有限长度的公开错误信息和 request id。
 - 仅保留 HTTP(S) 结果 URL；摘要会清理简单 HTML、合并空白并截断。
 - 不返回提供商原始响应，也不会把 API Key 写入工具参数、错误或结果。
