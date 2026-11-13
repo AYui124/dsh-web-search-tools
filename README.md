@@ -112,14 +112,15 @@ API 参数参考：[Tavily Search API](https://docs.tavily.com/documentation/api
 
 ## 发布 npm 包
 
-仓库通过 `.github/workflows/publish.yml` 和 npm Trusted Publishing 直接发布公共包，不使用长期 npm Token。工作流会在推送 `v*` Tag 或手动触发时执行：
+仓库通过 `.github/workflows/publish.yml` 和 npm Trusted Publishing 直接发布公共包，不使用长期 npm Token。工作流只在正式发布 GitHub Release 时执行；单独推送 Tag 不会发布 npm：
 
-1. 获取 GitHub OIDC 身份令牌。
-2. 校验 Git Tag 与 `package.json` 版本一致。
-3. 使用 Node.js 24，并安装支持 Trusted Publishing 的 npm 11。
-4. 使用 `npm ci --ignore-scripts` 安装锁定依赖。
-5. 执行语法检查、全部测试和 npm 包内容检查。
-6. 使用 provenance 将公共 scoped package 直接发布到 npm Registry。
+1. GitHub Release 的 `published` 事件触发工作流。
+2. 获取 GitHub OIDC 身份令牌。
+3. 校验 Release Tag 与 `package.json` 版本一致。
+4. 使用 Node.js 24，并安装支持 Trusted Publishing 的 npm 11。
+5. 使用 `npm ci --ignore-scripts` 安装锁定依赖。
+6. 执行语法检查、全部测试和 npm 包内容检查。
+7. 使用 provenance 将公共 scoped package 直接发布到 npm Registry。
 
 npm Package Settings 中的 Trusted Publisher 必须配置为：
 
@@ -139,17 +140,28 @@ permissions:
 
 不需要配置 `NPM_TOKEN`，也不要在 GitHub Secrets、仓库 `.npmrc`、源码或日志中保存 npm Token。
 
-发布前需要确保目标版本尚未在 npm 发布；npm 不允许覆盖同一版本。推荐先更新版本并创建版本提交及 Tag：
+发布前需要确保目标版本尚未在 npm 发布；npm 不允许覆盖同一版本。先更新版本并创建版本提交及 Tag：
 
 ```bash
 npm version patch
 git push origin main --follow-tags
 ```
 
-Tag 必须与 `package.json` 版本完全一致。Tag 推送后，GitHub Actions 会通过 OIDC 执行：
+Tag 必须与 `package.json` 版本完全一致。确认 Tag 已推送后，创建并发布 GitHub Release：
+
+```bash
+version="$(node -p "require('./package.json').version")"
+gh release create "v${version}" \
+  --repo AYui124/dsh-web-search-tools \
+  --verify-tag \
+  --generate-notes \
+  --title "v${version}"
+```
+
+Release 发布后，GitHub Actions 会通过 OIDC 执行：
 
 ```bash
 npm publish --access public --provenance
 ```
 
-Workflow 成功后，新版本会直接进入公开 Registry 并更新 `latest`，无需额外人工审批。
+Workflow 成功后，新版本会直接进入公开 Registry 并更新 `latest`，无需额外人工审批。只创建或推送 Tag、创建未发布的 Draft Release，都不会触发 npm 发布。
